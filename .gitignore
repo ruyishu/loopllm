@@ -1,0 +1,11 @@
+__pycache__/
+*.pyc
+.DS_Store
+out
+website/
+docs-minimind/
+# 训练产物与数据（体积大，不入库）
+dataset/*.jsonl
+dataset/*.bin
+*.pt
+*.pth

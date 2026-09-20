@@ -1,0 +1,29 @@
+loopllm
+Copyright 2026 ruyishu
+
+This product is a derivative work of MiniMind (https://github.com/jingyaogong/minimind),
+which is licensed under the Apache License, Version 2.0.
+
+Statement of modifications, as required by Apache License 2.0, Section 4(b):
+
+1. model/model_minimind.py — added looped execution of the shared block stack:
+   - `n_loops` config field (default 1 = upstream behaviour, unchanged code path)
+   - per-round residual gates (`loop_gates`), initialised to 1/sqrt(T) (LayerScale style)
+   - input re-injection of the first-round embedding on rounds r > 0
+   - KV cache automatically disabled when n_loops > 1 (a single cache slot cannot
+     represent several passes of the same layers; looping therefore does not save VRAM)
+2. trainer/train_pretrain.py, trainer/train_full_sft.py, trainer/train_dpo.py,
+   trainer/train_grpo.py, trainer/train_agent.py, eval_llm.py, scripts/eval_toolcall.py —
+   added a `--n_loops` flag (default 1) and pass it through to the model config.
+3. Added scripts/eval_math_toolcall.py — a 20-question math tool-use benchmark with
+   embedded questions and automatic grading (upstream's eval_toolcall.py only prints
+   demo outputs and does not score).
+4. Added scripts/make_report_figs.py — generates the figures shipped in figures/.
+5. Added docs/, figures/, README.md, README_en.md describing the looped-vs-baseline
+   A/B experiment run on top of upstream MiniMind.
+
+Unmodified: dataset pipeline and formats, tokenizer, training loop structure, and the
+MoE / LoRA / distillation features of the upstream project.
+
+All files in this repository remain licensed under the Apache License, Version 2.0
+(see LICENSE), the same license as the upstream work.
