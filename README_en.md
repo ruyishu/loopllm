@@ -43,13 +43,13 @@ We take [MiniMind](https://github.com/jingyaogong/minimind) — a from-scratch 6
 | Final pretrain loss (**full tier**, 264,651 steps) | 1.6433 | **1.5898** | **−3.3%** |
 | Final SFT loss (**full tier**, 319,340 steps) | 1.4955 | **1.3895** | **−7.1%** |
 | 20-question math tool-use (mini tier) | 6/20 (30%) | **10/20 (50%)** | **+20 points, stable** |
-| 20-question math tool-use (**full tier**) | 7/20 (35%) | **13/20 (65%)** | **+30 points — all four post-training stages land on 13/20** |
+| 20-question math tool-use (**full tier**) | 7/20 (35%) | **13/20 (65%)** | **+30 points — SFT / DPO / Agent all land on 13/20, GRPO on 12/20** |
 | vs. official upstream weights | 7/20 (35%) | **13/20 (65%)** | **the full tier now clearly beats the official full-data weights (9/20)** |
 | Cost | — | **3.5–3.9× time per step** | params unchanged, **no VRAM saving** |
 
 <div align="center">
 
-![Downstream gain from looping at the same depth: +30 points on the full tier, +20 on the mini tier](figures/fig8_four_arm.png)
+![Downstream gain from looping at the same depth: full-tier SFT/DPO/Agent at 13/20, GRPO at 12/20, mini tier +20 points throughout](figures/fig8_four_arm.png)
 
 </div>
 
@@ -91,18 +91,31 @@ All of it lives in `model/model_minimind.py` (`MiniMindModel.forward`):
 | pretrain | 0/20 | 0/20 | 0/20 | 0/20 |
 | full_sft | 6/20 (30%) | **10/20 (50%)** | 7/20 (35%) | **13/20 (65%)** |
 | dpo | — | 10/20 (50%) | 7/20 (35%) | **13/20 (65%)** |
-| grpo | 6/20 (30%) | 10/20 (50%) | 7/20 (35%) | **13/20 (65%)** |
+| grpo | 6/20 (30%) | 10/20 (50%) | 7/20 (35%) | **12/20 (60%)** |
 | agent | 6/20 (30%) | 10/20 (50%) | 6/20 (30%) | **13/20 (65%)** |
 
 (`—` = that checkpoint was not evaluated; under the `math_plus` tool set the trend is identical with lower absolutes — full tier goes 6/6/7/8 → **10/10/10/11**.)
 
-The gap comes from **expression correctness** (full tier 8/20 → 14/20, mini tier 7/20 → 11/20) while tool-calling rate is 20/20 on both sides — the looped model learns to **build the arithmetic expression correctly**, not merely to call the tool more often.
+The gap comes from **expression correctness** (full tier SFT/DPO/Agent 8/20 → 14/20, GRPO 8/20 → 13/20; mini tier 7/20 → 11/20) while tool-calling rate is 20/20 on both sides — the looped model learns to **build the arithmetic expression correctly**, not merely to call the tool more often.
 
 <div align="center">
 
 ![Downstream gain from looping at the same depth (mini tier)](figures/fig1_downstream.png)
 
 </div>
+
+### 2b. RL stages — all four runs now complete their full budget
+
+| RL stage | Reward mean, first 500 steps | Reward mean, last 500 steps | Steps |
+|---|---|---|---|
+| T=1 · RLAIF | −0.944 | **+0.587** | 9,751 / 9,751 |
+| T=1 · Agentic RL | −0.343 | **+0.517** | 19,994 / 19,994 |
+| T=4 · RLAIF (`b1g2`) | −0.922 | −0.247 | 19,502 / 19,502 |
+| T=4 · Agentic RL (`b1g2`) | +0.163 | **+0.291** (last 100: **+0.471**) | 39,988 / 39,988 |
+
+`KL_ref` / `KL` stay in −0.03 ~ −0.15 and `gnorm` is stable ⇒ **no reward hacking**.
+
+📌 **T=4's Agentic RL ends at +0.29 (last 100 steps +0.47), the same order as T=1's +0.52** — but **T=4's RLAIF never shows T=1's −0.94 → +0.59 climb and stalls at −0.25**. Together with the downstream numbers (GRPO +25pp vs Agent +30pp) the natural reading is that **the looped model optimises less efficiently in the GRPO stage and recovers it during Agentic RL** — one observation per chain, so not a strong claim.
 
 ### 3. Versus the official upstream weights (same questions, same protocol, `n_loops=1`)
 
@@ -184,7 +197,7 @@ Datasets follow MiniMind's format; see [`dataset/dataset.md`](dataset/dataset.md
 | **Eval needs stdin** | `EOFError` | `input()` inside `eval_toolcall.py` | Pipe `echo 0 \|` in the chain |
 | **Missing reward-model shard** | RL fails in seconds | Interrupted download left a partial file | Re-download + md5 verify |
 | **"Duplicate training" false alarm** | 9 `train_full_sft.py` processes | Main process + 8 DataLoader workers share the command line | Check `ps -o pid,ppid` |
-| **Reward function kills the whole run** | Agentic RL dies with `AttributeError` at step 2,412 | Argument validation only JSON-parses `arguments` when it is a **string**; a model emitting a **float** reaches `CHECK_ARGS[...]` and `.get()` raises | Coerce any non-dict to `{}` (scored as an invalid call) instead of letting it terminate training; same patch on **both arms**, backup taken first |
+| **Reward function kills the whole run** (two sites) | ① Agentic RL dies with `AttributeError` at step 2,412; ② it dies again from the same family of bugs at step 34,087 | ① `calculate_rewards` assumes `arguments` is a dict; a model emitting a **float** makes `.get()` raise; ② `rollout_single` assumes the whole tool call is a dict; a model emitting a **list** raises the same way | Both sites now coerce any non-dict to `{}` (treated as “invalid call / tool not found”) instead of letting it terminate the run; same patch on **both arms**, backup taken first |
 | **"Weight file exists = success"** | The rescue script treated crashed/truncated rounds as finished and skipped the retry tier | The trainer saves every 10 steps, so a crashed run still leaves a weight file behind | Judge success from the **log** (Traceback? exit code 0/124), never from file existence |
 
 ---
@@ -193,7 +206,8 @@ Datasets follow MiniMind's format; see [`dataset/dataset.md`](dataset/dataset.md
 
 - **Scale**: everything is measured at **64M parameters**; extrapolation to larger models/longer training is untested
 - **Evaluation**: a single 20-question task, extremely sensitive to tool-set size; n=20 has limited resolution
-- **RL comparison is weak and not hyper-parameter matched**: ① T=4 cannot finish an epoch on one card (RLAIF ≈3 days, AGENT ≈16 days), so the RL stages use an **iso-wall-clock** budget (a degraded control); ② matching T=1's RL config (`batch 2 / num_generations 4`) **OOMs immediately** (44.52 GiB with 234 MiB free), so the T=4 RL stages run `batch 1 / num_generations 2` — i.e. **equal data coverage, unequal hyper-parameters**. SFT / DPO are unaffected and remain clean equal-data equal-step controls
+- **RL hyper-parameters cannot be matched (budgets now are)**: ① both chains run the **same data coverage** (T=1 with `batch 2 / num_generations 4` for 9,751 / 19,994 steps, T=4 with `batch 1 / num_generations 2` for 19,502 / 39,988 steps); ② but the **hyper-parameters cannot be matched**: giving T=4 the same `batch 2 / num_generations 4` config **OOMs immediately** (44.52 GiB with 234 MiB free) — a single-card memory limit, not an implementation issue. So the RL stages are an *equal-data, unequal-hyper-parameter* control; SFT / DPO are unaffected and remain clean equal-data equal-step controls
+- **The RL reward evidence is asymmetric**: T=4's Agentic RL ends in the same range as T=1 (+0.29 vs +0.52), but T=4's RLAIF ends far below T=1 (−0.25 vs +0.59) — on “did RL actually learn” the two chains disagree
 - **No T sweep**: only T=1 vs T=4, so "what is the optimal T" is unanswered
 - **No iso-compute control**: "what if T=1 got the extra 3.5× compute" is deliberately out of scope (that is the next step)
 
@@ -201,7 +215,7 @@ Datasets follow MiniMind's format; see [`dataset/dataset.md`](dataset/dataset.md
 
 ## 🗺️ Roadmap
 
-- [x] Full-tier T1 vs T4 reconciliation — all five checkpoints are now aligned (see the four-arm table); what remains is finishing the T=4 RL budget from its checkpoint
+- [x] Full-tier T1 vs T4 reconciliation — all five checkpoints and all four RL budgets are now aligned (see the four-arm table and the RL table); the only remaining mismatch is the smaller RL hyper-parameter tier
 - [ ] Iso-compute curve (same wall-clock budget)
 - [ ] T sweep (T=2 / 4 / 8) and the optimal T
 - [ ] Scale extrapolation (104M / 198M tiers)
